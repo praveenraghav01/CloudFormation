@@ -1,0 +1,104 @@
+Description: >
+    This template is used to deploys a VPC, with a pair of public and private 
+    subnets spread across two Availabilty Zones. It deploys an Internet Gateway, with 
+    a default route on the public subnets. It deploys a pair of NAT Gateways (one in each AZ), 
+    and default routes for them in the private subnets. It also create a Elastic Load Balancer 
+    with Health Check and auto scaling group with Launch Configure.
+
+Mappings: 
+  RegionMap: 
+    us-east-1: 
+      "32": "ami-8c1be5f6"
+    us-east-2: 
+      "32": "ami-c5062ba0"
+    us-west-1: 
+      "32": "ami-02eada62"
+    us-west-2: 
+      "32": "ami-e689729e"
+    eu-west-1: 
+      "32": "ami-acd005d5"
+    eu-west-2:
+       "32": "ami-1a7f6d7e"
+    ap-southeast-1: 
+      "32": "ami-0797ea64"
+    ap-southeast-2:
+       "32": "ami-8536d6e7"
+    ap-northeast-1: 
+      "32": "ami-2a69be4c"
+    ap-northeast-2:
+       "32": "ami-9bec36f5"
+    ap-south-1:
+      "32": "ami-4fc58420"
+    eu-central-1:
+       "32": "ami-c7ee5ca8"
+    ca-central-1:
+       "32": "ami-fd55ec99"    
+    sa-east-1:
+      "32": "ami-f1344b9d"
+
+Resources:
+  WebServerInstance:
+    Type: AWS::EC2::Instance
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets: chefnode
+        chefnode:
+          files:
+            /etc/chef/client.rb:
+              content: !Sub |
+                log_level        :info
+                log_location     STDOUT
+                chef_server_url  'https://api.chef.io/organizations/datagrokrdemo'
+                validation_client_name 'datagrokrdemo-validator'
+                validation_key '/etc/chef/datagrokrdemo-validator.pem';
+              mode: "0400"
+              owner: "root"
+              group: "root"
+            
+            /etc/chef/first.json:
+              content: !Sub |
+                {
+                  "run_list" : ["recipe[ec2]"];
+                };
+              mode: "0400"
+              group: "root"
+              owner: "root"
+    Properties:
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", '32']
+      InstanceType: t2.micro
+      KeyName: chef-demo
+      SecurityGroups:
+        - Ref: SecurityGroups
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash 
+          yum install -y aws-cfn-bootstrap
+          yum update -y
+          cd ~
+          wget https://packages.chef.io/files/stable/chef/13.6.0/el/7/chef-13.6.0-1.el7.x86_64.rpm
+          rpm -ivh chef-13.6.0-1.el7.x86_64.rpm
+          '/opt/aws/bin/cfn-init -v '
+            '         --stack '
+                          !Ref 'AWS::StackName'
+            '         --resource WebServerInstance '
+            '         --configsets chefnode '
+            '         --region '
+                          !Ref 'AWS::Region'
+          cd /etc/chef
+          wget https://s3.amazonaws.com/demo-chef-raghav/datagrokrdemo-validator.pem
+          chef-client -j /etc/chef/first.json
+
+  SecurityGroups:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow http to client host 
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 0.0.0.0/0
+
